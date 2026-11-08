@@ -1,6 +1,6 @@
 # Spektrafilm LrC-Exp
 
-在 Windows 上用 Lightroom Classic 完成选片和基础调整，再在横向工作区内选择胶片、印相、检查细节并批量导出。当前发布版本为 **0.5.0**。工作区使用 Windows PowerShell 5.1 和 WPF。
+在 Windows 上用 Lightroom Classic 完成选片和基础调整，再在横向工作区内选择胶片、印相、检查细节并批量导出。当前发布版本为 **0.5.1**。工作区使用 Windows PowerShell 5.1 和 WPF。
 
 ![Spektrafilm 横向工作区。左侧为咖啡样片的暖白留边预览，右侧选择胶片与相纸，底部胶片条显示三张照片。](docs/images/workspace.png)
 
@@ -8,7 +8,7 @@
 
 ## 安装与更新
 
-下载并完整解压 Windows x64 发布包。打开解压后的 `Spektrafilm-LrC-Exp` 文件夹，在 PowerShell 中运行安装脚本。首次安装需要联网下载 Python 3.13 和渲染依赖。[下载 v0.5.0 Windows x64 发布包](https://github.com/ainepadma/Spektrafilm-LrC-Exp/releases/download/v0.5.0/Spektrafilm-LrC-Exp-v0.5.0-Windows-x64.zip)
+下载并完整解压 Windows x64 发布包。打开解压后的 `Spektrafilm-LrC-Exp` 文件夹，在 PowerShell 中运行安装脚本。首次安装需要联网下载 Python 3.13 和渲染依赖。[下载 v0.5.1 Windows x64 发布包](https://github.com/ainepadma/Spektrafilm-LrC-Exp/releases/download/v0.5.1/Spektrafilm-LrC-Exp-v0.5.1-Windows-x64.zip)
 
 ```powershell
 .\scripts\setup.ps1
@@ -45,6 +45,10 @@
 点击「100%」和「分割」，拖动「分割位置」就能比较同一处纹理。图中杯口左半保留原图，右半显示 Kodak Tri-X 400 在 Ilford Multigrade IV RC 相纸上的效果。右栏直方图统计当前局部的模拟结果。
 
 ## 相纸留白、片边与半格
+
+在右栏「相纸留白」点击 **拍立得 · 暖彩**，会为当前照片套用 Kodak Portra 400、Portra Endura 印相和暖白纸边。**拍立得 · 黑白** 使用 Ilford HP5 Plus 400、Multigrade IV RC 印相和白纸边。这两款是即显风格组合，使用现有胶片的模拟数据。组合会关闭直扫和片门，保留照片构图。上边及左右默认各留短边的 6%，底边为上边的三倍；可以继续调整宽度和纸色，也可以在「纸边样式」切回四边等宽。
+
+![同一张咖啡样片的拍立得组合对照：左为暖彩与暖白纸边，右为黑白与白色纸边。](docs/images/instant-pair.jpg)
 
 ![同一张咖啡样片在无边、暖白相纸留边以及带齿孔的 135 胶片片边下的成片对照。](docs/images/paper-border.png)
 

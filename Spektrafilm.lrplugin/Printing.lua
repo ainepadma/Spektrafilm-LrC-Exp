@@ -4,7 +4,7 @@ local LrPathUtils = import "LrPathUtils"
 local LrTasks = import "LrTasks"
 
 local P = {}
-local finish = {paperBorder="auto",paperMargin=0.035,paperColor="#F7F3E9",gate="none",holes=true,markings=true,frameNumber=1,fog=0,leak=0,
+local finish = {paperBorder="auto",paperLayout="even",paperMargin=0.035,paperColor="#F7F3E9",gate="none",holes=true,markings=true,frameNumber=1,fog=0,leak=0,
     dateFace="none",datePosition="br",dateSize=0.043,dateMargin=0.04,dateBrightness=0.85,
     pairDirection="horizontal",pairGap=1,firstEv=0,secondEv=0,firstScale=1,secondScale=1,
     firstX=0,firstY=0,secondX=0,secondY=0}

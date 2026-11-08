@@ -99,7 +99,7 @@ local optionFlags={
     firstX="first-x",firstY="first-y",secondX="second-x",secondY="second-y",protectedSource="protected-source",
     partnerSource="protected-source",
     pairFilm="pair-film",pairPaper="pair-paper",pairMode="pair-mode",frameFraction="frame-fraction",
-    previewBox="preview-box",paperBorder="paper-border",paperMargin="paper-margin",paperColor="paper-color",
+    previewBox="preview-box",paperBorder="paper-border",paperLayout="paper-layout",paperMargin="paper-margin",paperColor="paper-color",
 }
 function Render.film(session, input, output, film, paper, mode, recipe, printing, diagnosticsPath)
     local args = { "render", "--input", input, "--output", output, "--film", film, "--paper", paper }

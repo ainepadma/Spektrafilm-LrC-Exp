@@ -45,6 +45,11 @@ function Update-StockChoices($State) {
 }
 function Add-PaperSection($Rail) {
     $p=New-WorkspaceSection $Rail '相纸留白' $true
+    $combos=New-Object Windows.Controls.WrapPanel
+    [void]$p.Children.Add($combos)
+    [void](Add-PanelButton $combos '拍立得 · 暖彩' { Flush-Ranges; $script:Category='all'; [void](Send-UiAction instant @{stock='color'}) })
+    [void](Add-PanelButton $combos '拍立得 · 黑白' { Flush-Ranges; $script:Category='all'; [void](Send-UiAction instant @{stock='bw'}) })
+    Add-ChoiceField $p '纸边样式' printing paperLayout (Make-Choices @(,@('even','四边等宽');,@('instant','拍立得宽底边'))) 'even'
     Add-ChoiceField $p '纸色' printing paperBorder (Make-Choices @(,@('auto','印相时自动');,@('none','关闭');,@('white','白色');,@('warm','暖白');,@('black','黑色');,@('custom','自定义'))) 'auto'
     Add-RangeField $p '留白 / 短边 %' printing paperMargin 0 30 .035 .1 $null 100
     Add-TextField $p '自定义颜色' printing paperColor '#F7F3E9'

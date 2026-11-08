@@ -53,7 +53,10 @@ package.loaded.ExportSettings={
 local Render={
     newSession=function()return "/session"end,stopSession=function()end,closeSession=function()end,
     profiles=function()return {film={{value="neg",channel="color",type="negative",title="Negative",targetPrint="paper"},
-        {value="slide",channel="color",type="positive",title="Slide"}},paper={{value="paper",channel="color",title="Paper"}}}end,
+        {value="slide",channel="color",type="positive",title="Slide"},
+        {value="ilford_hp5_plus_400",channel="bw",type="negative",title="HP5 Plus"}},
+        paper={{value="paper",channel="color",title="Paper"},
+        {value="ilford_multigrade_iv_rc",channel="bw",title="Multigrade"}}}end,
     input=function(photo,_,w,h,space)
         local path="/session/input-"..(#inputs+1)..".tif"
         inputs[#inputs+1]={id=photo.localIdentifier,w=w,h=h,space=space,path=path}
@@ -153,6 +156,11 @@ step(function(d)
 end)
 step(function(d)
     assert(state.status:find("队列已停止",1,true));d("sync",{groups={1,5}})
+    d("instant",{stock="bw",photoId=state.photoId})
+end)
+step(function()
+    assert(state.recipe.film=="ilford_hp5_plus_400" and state.recipe.paper=="ilford_multigrade_iv_rc")
+    assert(state.recipe.printing.paperLayout=="instant" and state.recipe.printing.paperMargin==.06)
     active,selected=nil,{}
 end)
 step(function() assert(state.position=="0 / 0" and not state.canExport and not state.preview) end)

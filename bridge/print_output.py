@@ -24,6 +24,7 @@ def add_arguments(job):
     job.add_argument("--preview-box", type=parse_box, help="Fit a preview PNG/JPEG inside the display area.")
     job.add_argument("--display-proof", action="store_true", help="Use display-quality JPEG encoding.")
     job.add_argument("--paper-border", choices=("none", "auto", *PAPER_COLORS, "custom"), default="none")
+    job.add_argument("--paper-layout", choices=("even", "instant"), default="even")
     job.add_argument("--paper-margin", type=float, default=.035,
                      help="Width on each side, as a fraction of the finished image's short edge.")
     job.add_argument("--paper-color", default=PAPER_COLORS["warm"], help="Custom paper color in sRGB #RRGGBB.")
@@ -266,12 +267,13 @@ def paper_border(image, args, printed):
     margin = round(min(h, w) * width)
     if not margin:
         return image
-    canvas = np.empty((h + margin*2, w + margin*2, 3), dtype=image.dtype)
+    bottom = margin * 3 if args.paper_layout == "instant" else margin
+    canvas = np.empty((h + margin + bottom, w + margin*2, 3), dtype=image.dtype)
     edges = encoded_paper_color(color, args.output_space)
     canvas[:margin] = edges
-    canvas[-margin:] = edges
-    canvas[margin:-margin, :margin] = edges
-    canvas[margin:-margin, -margin:] = edges
+    canvas[-bottom:] = edges
+    canvas[margin:-bottom, :margin] = edges
+    canvas[margin:-bottom, -margin:] = edges
     canvas[margin:margin+h, margin:margin+w] = image
     return canvas
 

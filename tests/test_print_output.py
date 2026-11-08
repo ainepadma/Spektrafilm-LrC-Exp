@@ -28,6 +28,15 @@ def options(*fields):
 
 
 class PrintOutputTest(unittest.TestCase):
+    def test_instant_paper_preserves_image_with_triple_bottom_margin(self):
+        for height, width in ((100, 150), (150, 100)):
+            photo = np.zeros((height, width, 3), dtype=np.float32)
+            args = options("--paper-border", "white", "--paper-layout", "instant", "--paper-margin", ".06")
+            result = printing.paper_border(photo, args, printed=True)
+            self.assertEqual(result.shape, (height + 24, width + 12, 3))
+            np.testing.assert_array_equal(result[6:-18, 6:-6], photo)
+            self.assertTrue(np.all(result[:6] == 1) and np.all(result[-18:] == 1))
+
     def test_paper_edits_reuse_only_the_matching_developed_preview(self):
         with tempfile.TemporaryDirectory(dir=ROOT/".runtime") as folder:
             path = Path(folder)

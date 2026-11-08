@@ -529,6 +529,16 @@ local function runEditor(context, ws)
             strip:update(state.candidates,state.index,a.delta);state.dirty=true
         elseif kind=="refresh" then inputs:invalidate();syncSelection(true);requestPreview(true)
         elseif kind=="edit" then applyEdit(a)
+        elseif kind=="instant" and photo then
+            if p.format=="di" then status("请先切换到 JPEG、PNG 或 TIFF，再套用拍立得组合。");return end
+            if a.stock=="color" then
+                p.film,p.paper,p.paperBorder="kodak_portra_400","kodak_portra_endura","warm"
+            elseif a.stock=="bw" then
+                p.film,p.paper,p.paperBorder="ilford_hp5_plus_400","ilford_multigrade_iv_rc","white"
+            else return end
+            p.category,p.paperLayout,p.paperMargin,p.gate="all","instant",0.06,"none"
+            state.options.scan=false
+            savePhoto(false)
         elseif kind=="copy" and photo then store.clipboard=getRecipe();status("已复制当前照片的设置。")
         elseif kind=="paste" or kind=="sync" then paste(kind=="sync",a.groups)
         elseif kind=="export" then exportSelection()
