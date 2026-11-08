@@ -28,6 +28,59 @@ def options(*fields):
 
 
 class PrintOutputTest(unittest.TestCase):
+    def test_png_watermark_position_opacity_and_transparency(self):
+        photo = np.zeros((100, 200, 3), dtype=np.float32)
+        with tempfile.TemporaryDirectory(dir=ROOT/".runtime") as folder:
+            path = Path(folder)/"标识.png"
+            logo = np.zeros((20, 20, 4), dtype=np.uint8)
+            logo[:, 10:] = (255, 0, 0, 128)
+            Image.fromarray(logo).save(path)
+            args = options("--watermark","png","--watermark-png",str(path),"--watermark-size",".2",
+                           "--watermark-position","center","--watermark-opacity",".5")
+            out = printing.finish(photo,args)
+            np.testing.assert_array_equal(out[:40], 0)
+            np.testing.assert_array_equal(out[:, :100], 0)
+            self.assertAlmostEqual(float(out[50,105,0]), 64/255, places=5)
+            np.testing.assert_array_equal(photo, 0)
+
+    def test_selected_caption_font_and_text_watermark(self):
+        from PIL import ImageFont
+        photo = np.zeros((200, 320, 3), dtype=np.float32)
+        args = options("--watermark","text","--watermark-text","Signature","--watermark-font","example.ttf",
+                       "--paper-layout","instant","--paper-border","white","--paper-caption","Title",
+                       "--caption-font","second.ttf")
+        with patch.object(printing,"caption_font",side_effect=lambda size,face: ImageFont.load_default(size=size)) as fonts:
+            output = printing.finish(photo,args)
+            self.assertEqual({call.args[1] for call in fonts.call_args_list},{"example.ttf","second.ttf"})
+            self.assertGreater(output[7:207,7:327].max(),0)
+    def test_instant_square_position_and_caption_are_confined_to_the_paper(self):
+        for height, width in ((80, 120), (120, 80)):
+            y, x = np.indices((height, width))
+            photo = np.stack((x/width, y/height, x*0), axis=-1).astype(np.float32)
+            args = options("--paper-layout","instant","--paper-border","white","--paper-margin",".10",
+                           "--instant-frame","square","--instant-position","1","--paper-caption","旅行 2026")
+            print_with_text = printing.paper_border(photo, args, True)
+            self.assertEqual(print_with_text.shape, (112, 96, 3))
+            np.testing.assert_array_equal(print_with_text[8:88,8:-8], photo[-80:,-80:])
+            args.paper_caption = ""
+            blank = printing.paper_border(photo, args, True)
+            np.testing.assert_array_equal(print_with_text[:-24], blank[:-24])
+            self.assertTrue(np.any(print_with_text[-24:] != blank[-24:]))
+
+    def test_draft_and_final_render_at_distinct_resolutions(self):
+        with tempfile.TemporaryDirectory(dir=ROOT/".runtime") as folder:
+            path = Path(folder)
+            args = options("--display-proof", "--draft")
+            args.input = path/"input.tif"
+            tifffile.imwrite(args.input, np.full((400, 1000, 3), 30000, np.uint16), photometric="rgb")
+            args.film, args.paper, args.fast_color = "kodak_portra_400", "auto", True
+            args.recipe, args.frame_fraction, args.diagnostics = "{}", 1, None
+            for draft, size in ((True, (800, 320)), (False, (1000, 400))):
+                args.draft, args.output = draft, path/f"{draft}.png"
+                worker.render(args, worker.profiles())
+                with Image.open(args.output) as proof:
+                    self.assertEqual(proof.size, size)
+
     def test_instant_paper_preserves_image_with_triple_bottom_margin(self):
         for height, width in ((100, 150), (150, 100)):
             photo = np.zeros((height, width, 3), dtype=np.float32)

@@ -48,7 +48,10 @@ try {
     $box.IsDropDownOpen=$false
     $marginField=$script:Fields | Where-Object key -eq 'paperMargin'
     if ([Math]::Abs($marginField.control.Value-3.5) -gt .000001) { throw 'Paper fraction did not appear as a percentage.' }
-    $marginField.control.Value=7.5; Flush-Ranges
+    $marginField.control.Value=7.5; Flush-Ranges $true
+    if (!$script:Actions[-1].payload.draft) { throw 'Drag did not request a draft.' }
+    Flush-Ranges
+    if ($script:Actions[-1].payload.draft) { throw 'Settled slider did not request a full preview.' }
     if ($script:Actions[-1].payload.value -ne .075) { throw 'Paper percentage did not round trip to the renderer.' }
     Click-Control $controls.Split
     if (!$script:Actions[-1].payload.enabled -or $controls.DividerRow.Visibility -ne 'Visible' -or
@@ -59,7 +62,46 @@ try {
     $action=$script:Actions[-1]
     if ($action.kind -ne 'inspect' -or $action.payload.enabled -or $action.payload.zoom -ne 'fit' -or
         $controls.HistogramPanel.Visibility -ne 'Collapsed') { throw 'Finished print did not restore the framed overview.' }
-    Write-Output 'Passed inline paper selection, percentage editing, inspection and return to the finished print.'
+    $fixture.preview=Join-Path $project 'Spektrafilm.lrplugin/preview/640x384.png'
+    $fixture.canPin=$true
+    Apply-WorkspaceState $fixture
+    Click-Control $controls.Pin
+    $original=$controls.ReferenceImage.Source
+    if (!$original -or $controls.CompareTools.Visibility -ne 'Visible') { throw 'Cannot pin the finished photo.' }
+    $fixture.preview=Join-Path $project 'Spektrafilm.lrplugin/preview/832x468.png'
+    Apply-WorkspaceState $fixture
+    $controls.ComparePosition.Value=0
+    if ($controls.ReferenceLayer.Clip.Rect.Width -ne 0 -or $controls.ReferenceImage.Source -ne $original -or
+        $controls.Preview.Source -eq $original) { throw 'Adjusting B changed A or failed to move the divider.' }
+    $fixture.photoId='43';$fixture.canPin=$false
+    $fixture.filmPresets=@('暖彩')
+    Apply-WorkspaceState $fixture
+    if ($controls.ReferenceImage.Source -or $controls.Pin.IsEnabled) { throw 'Stale reference survived navigation.' }
+    $section=$script:FilmPresetName.Parent.Parent
+    $script:FilmPresetName.Text='暖彩'
+    Click-Control ($section.Children | Where-Object Content -eq '保存当前配方（同名更新）')
+    if ($script:Actions[-1].kind -ne 'filmPreset' -or $script:Actions[-1].payload.operation -ne 'save') {
+        throw 'Film preset save button did not dispatch.'
+    }
+    Select-Value $script:FilmPresetBox '暖彩'
+    $applyRow=$section.Children[1]
+    Click-Control ($applyRow.Children | Where-Object Tag -eq 'selection')
+    if ($script:Actions[-1].payload.operation -ne 'selection' -or $script:Actions[-1].payload.name -ne '暖彩') {
+        throw 'Film preset selection action did not target the chosen preset.'
+    }
+    $fixture.recipe.printing.paperLayout='instant'
+    $fixture.recipe.printing.watermark='text'
+    Apply-WorkspaceState $fixture
+    foreach ($key in @('captionFont','watermarkFont')) {
+        $field=$script:Fields | Where-Object key -eq $key
+        if (!$field.control.IsEnabled -or $field.control.Items.Count -lt 2) { throw "No installed font choices for $key" }
+        $field.control.SelectedIndex=1
+        if ($script:Actions[-1].payload.key -ne $key) { throw "Font selection did not update $key" }
+    }
+    $fixture.recipe.printing.watermark='png'
+    Apply-WorkspaceState $fixture
+    if (!($script:Fields | Where-Object key -eq 'watermarkPng').control.IsEnabled) { throw 'PNG watermark path disabled' }
+    Write-Output 'Passed sidebar edits, inspection and same-photo A/B comparison.'
 } finally {
     if ($testSource) { $testSource.Dispose() }
     foreach ($file in @($testStatePath,$testSnapshot)) { if ([IO.File]::Exists($file)) { [IO.File]::Delete($file) } }

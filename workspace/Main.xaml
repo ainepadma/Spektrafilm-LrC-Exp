@@ -46,6 +46,12 @@
                         <Grid>
                             <Image Name="Preview" HorizontalAlignment="Center" VerticalAlignment="Center" Stretch="Fill"
                                    RenderOptions.BitmapScalingMode="HighQuality"/>
+                            <Grid Name="ReferenceLayer" Background="#242628" Visibility="Collapsed" IsHitTestVisible="False">
+                                <Image Name="ReferenceImage" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Stretch="Fill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                            </Grid>
+                            <Border Name="ReferenceLine" Width="1" HorizontalAlignment="Left" Background="White"
+                                    Visibility="Collapsed" IsHitTestVisible="False"/>
                             <TextBlock Name="Empty" Text="在 Lightroom Classic 中选择照片" HorizontalAlignment="Center"
                                        VerticalAlignment="Center" Foreground="#9EA2A8"/>
                         </Grid>
@@ -60,6 +66,7 @@
                                 <Button Name="After" Content="成片" Margin="0,0,3,2"/>
                                 <Button Name="Before" Content="原图" Margin="0,0,3,2" ToolTip="LrC 基础调整后的照片"/>
                                 <Button Name="Split" Content="分割" Margin="0,0,12,2"/>
+                                <Button Name="Pin" Content="固定为 A" IsEnabled="False" Margin="0,0,6,2"/>
                                 <Button Name="Histogram" Content="直方图" Margin="0,0,3,2"/>
                                 <Button Name="Refresh" Content="刷新预览" Margin="0,0,0,2"/>
                             </WrapPanel>
@@ -76,6 +83,10 @@
                                 </StackPanel>
                             </Border>
                             <StackPanel Margin="12,0">
+                                <StackPanel Name="CompareTools" Visibility="Collapsed" Margin="0,6">
+                                    <TextBlock Text="左 A · 固定成片　　右 B · 当前配方"/>
+                                    <Slider Name="ComparePosition" Minimum="0" Maximum="100" Value="50" IsMoveToPointEnabled="True"/>
+                                </StackPanel>
                                 <DockPanel Name="DividerRow" Visibility="Collapsed">
                                     <TextBlock DockPanel.Dock="Left" Text="分割位置" Margin="0,0,12,0"/>
                                     <Slider Name="Divider" Minimum="0" Maximum="100" Value="50" IsMoveToPointEnabled="True"/>

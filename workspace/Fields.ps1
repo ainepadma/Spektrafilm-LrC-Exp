@@ -83,7 +83,7 @@ function Send-Edit([string]$Group,[string]$Key,$Value) {
     if ($script:Applying -or $null -eq $script:State -or $script:QaMode) { return }
     $id = [string](Read-Member $script:State 'photoId' '')
     if (!$id -and $Group -ne 'export') { return }
-    $sequence = Send-UiAction edit @{group=$Group; key=$Key; value=$Value}
+    $sequence = Send-UiAction edit @{group=$Group; key=$Key; value=$Value; draft=[bool]$script:SendingDraft}
     $script:Optimistic["$id/$Group/$Key"] = @{value=$Value; sequence=$sequence; acknowledged=$false}
 }
 function New-Field($Parent,[string]$Group,[string]$Key,$Default,[string]$Label,[string]$Type) {
@@ -195,12 +195,21 @@ function Add-TextField($Panel,[string]$Label,[string]$Group,[string]$Key,[string
 }
 function Queue-RangeEdit($Field,[double]$Value) {
     $script:RangeQueue["$($Field.group)/$($Field.key)"] = @{field=$Field; value=$Value;photoId=[string]$script:State.photoId}
-    $script:RangeTimer.Stop(); $script:RangeTimer.Start()
+    $script:LastRangeChange=[datetime]::UtcNow
+    if (!$script:RangeTimer.IsEnabled) { $script:RangeTimer.Start() }
 }
-function Flush-Ranges {
-    $script:RangeTimer.Stop()
-    $entries=@($script:RangeQueue.Values); $script:RangeQueue.Clear()
-    foreach($record in $entries) {
-        if ($record.photoId -ceq [string]$script:State.photoId) { Send-NumericField $record.field $record.value }
+function Flush-Ranges([bool]$Draft=$false) {
+    $entries=@($script:RangeQueue.Values)
+    if (!$Draft) { $script:RangeTimer.Stop(); $script:RangeQueue.Clear() }
+    $script:SendingDraft=$Draft
+    try {
+        foreach($record in $entries) {
+            if ($record.photoId -ceq [string]$script:State.photoId -and (!$Draft -or !$record.sent)) {
+                Send-NumericField $record.field $record.value
+                $record.sent=$true
+            }
+        }
+    } finally {
+        $script:SendingDraft=$false
     }
 }

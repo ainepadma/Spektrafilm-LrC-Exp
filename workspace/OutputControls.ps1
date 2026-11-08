@@ -43,6 +43,23 @@ function Update-StockChoices($State) {
     Select-Value $script:PaperBox (Get-FieldValue $State recipe paper '')
     $script:StockHint.Text=[string](Read-Member $State 'stockHint' '')
 }
+function Get-FontChoices {
+    $items=@{}
+    $dirs=@([IO.Path]::Combine($env:LOCALAPPDATA,'Microsoft\Windows\Fonts'),[IO.Path]::Combine($env:WINDIR,'Fonts'))
+    foreach ($key in @('HKCU:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts','HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts')) {
+        $registry=Get-Item -LiteralPath $key -ErrorAction SilentlyContinue
+        if (!$registry) { continue }
+        foreach ($label in $registry.GetValueNames()) {
+            $file=[IO.Path]::GetFileName([string]$registry.GetValue($label))
+            if ($file -notmatch '\.(ttf|ttc|otf)$' -or $items.ContainsKey($file)) { continue }
+            if ([IO.File]::Exists([IO.Path]::Combine($dirs[0],$file)) -or [IO.File]::Exists([IO.Path]::Combine($dirs[1],$file))) {
+                $items[$file]=[pscustomobject]@{value=$file;title=($label -replace ' \((TrueType|OpenType)\)$','')}
+            }
+        }
+    }
+    [pscustomobject]@{value='auto';title='默认中文字体'}
+    $items.Values | Sort-Object title
+}
 function Add-PaperSection($Rail) {
     $p=New-WorkspaceSection $Rail '相纸留白' $true
     $combos=New-Object Windows.Controls.WrapPanel
@@ -53,6 +70,47 @@ function Add-PaperSection($Rail) {
     Add-ChoiceField $p '纸色' printing paperBorder (Make-Choices @(,@('auto','印相时自动');,@('none','关闭');,@('white','白色');,@('warm','暖白');,@('black','黑色');,@('custom','自定义'))) 'auto'
     Add-RangeField $p '留白 / 短边 %' printing paperMargin 0 30 .035 .1 $null 100
     Add-TextField $p '自定义颜色' printing paperColor '#F7F3E9'
+    Add-ChoiceField $p '拍立得画面' printing instantFrame (Make-Choices @(,@('original','原比例');,@('square','方形 1:1'))) 'original'
+    Add-RangeField $p '取景位置' printing instantPosition -1 1 0 .01
+    Add-TextField $p '底边题字' printing paperCaption ''
+    Add-ChoiceField $p '题字字体' printing captionFont $script:FontChoices 'auto'
+    [void](Add-PanelText $p '题字中可用 {date} 插入拍摄日期。')
+}
+function Add-WatermarkSection($Rail) {
+    $p=New-WorkspaceSection $Rail '自定义水印' $false
+    Add-ChoiceField $p '类型' printing watermark (Make-Choices @(,@('off','关闭');,@('text','文字');,@('png','PNG 图片'))) 'off'
+    Add-TextField $p '水印文字' printing watermarkText ''
+    Add-ChoiceField $p '文字字体' printing watermarkFont $script:FontChoices 'auto'
+    Add-TextField $p '文字颜色' printing watermarkColor '#FFFFFF'
+    Add-TextField $p 'PNG 完整路径' printing watermarkPng ''
+    Add-ChoiceField $p '位置' printing watermarkPosition (Make-Choices @(,@('tl','左上');,@('tr','右上');,@('center','居中');,@('bl','左下');,@('br','右下'))) 'br'
+    Add-RangeField $p '大小 / 短边 %' printing watermarkSize 1 50 .12 1 $null 100
+    Add-RangeField $p '不透明度 %' printing watermarkOpacity 0 100 .7 1 $null 100
+}
+function Add-FilmPresetSection($Rail) {
+    $panel=New-WorkspaceSection $Rail '胶片配方' $false
+    $row=New-FieldRow $panel '已保存'
+    $script:FilmPresetBox=New-Object Windows.Controls.ComboBox
+    [void]$row.Children.Add($script:FilmPresetBox)
+    $row=New-Object Windows.Controls.WrapPanel;[void]$panel.Children.Add($row)
+    foreach ($pair in @(,@('current','应用到当前');,@('selection','应用到选区'))) {
+        $button=Add-PanelButton $row $pair[1] {param($button,$e)
+            if (!$script:FilmPresetBox.SelectedItem) { Show-Notice '请选择胶片配方。';return }
+            Flush-Ranges
+            $script:Category='all'
+            [void](Send-UiAction filmPreset @{operation=$button.Tag;name=$script:FilmPresetBox.SelectedItem.Tag})
+        }
+        $button.Tag=$pair[0]
+    }
+    $row=New-FieldRow $panel '配方名称'
+    $script:FilmPresetName=New-Object Windows.Controls.TextBox
+    [void]$row.Children.Add($script:FilmPresetName)
+    [void](Add-PanelButton $panel '保存当前配方（同名更新）' {
+        $name=$script:FilmPresetName.Text.Trim()
+        if (!$name) { Show-Notice '请输入胶片配方名称。';return }
+        Flush-Ranges
+        [void](Send-UiAction filmPreset @{operation='save';name=$name})
+    })
 }
 function Add-OutputSections($Rail) {
     $p=New-WorkspaceSection $Rail '胶片片边' $false

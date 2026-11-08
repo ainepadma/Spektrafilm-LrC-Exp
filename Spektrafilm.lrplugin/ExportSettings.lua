@@ -40,17 +40,17 @@ function Settings.save(folder, format, edge, mode, printing)
     Data.write(runtime, {["export-settings"]={folder=folder,format=format,edge=edge,mode=mode,printing=printing or {}}})
 end
 
-function Settings.presets()
-    local records=Data.read(runtime,"print-recipes") or {}
-    if type(records)~="table" then error("导出配方文件无效。",0) end
+function Settings.presets(film)
+    local records=Data.read(runtime,film and "film-presets" or "print-recipes") or {}
+    if type(records)~="table" then error("配方文件无效。",0) end
     return records
 end
 
-function Settings.savePreset(name, values)
+function Settings.savePreset(name, values, film)
     assert(type(name)=="string" and name:match("%S") and #name<=100, "请输入有效的配方名称。")
-    local records=Settings.presets()
+    local records=Settings.presets(film)
     records[name]=values
-    Data.write(runtime,{["print-recipes"]=records})
+    Data.write(runtime,{[film and "film-presets" or "print-recipes"]=records})
 end
 
 return Settings

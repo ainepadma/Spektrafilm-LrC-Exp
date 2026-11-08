@@ -100,6 +100,10 @@ local optionFlags={
     partnerSource="protected-source",
     pairFilm="pair-film",pairPaper="pair-paper",pairMode="pair-mode",frameFraction="frame-fraction",
     previewBox="preview-box",paperBorder="paper-border",paperLayout="paper-layout",paperMargin="paper-margin",paperColor="paper-color",
+    instantFrame="instant-frame",instantPosition="instant-position",
+    captionFont="caption-font",watermark="watermark",watermarkFont="watermark-font",
+    watermarkColor="watermark-color",watermarkPosition="watermark-position",
+    watermarkOpacity="watermark-opacity",watermarkSize="watermark-size",
 }
 function Render.film(session, input, output, film, paper, mode, recipe, printing, diagnosticsPath)
     local args = { "render", "--input", input, "--output", output, "--film", film, "--paper", paper }
@@ -120,6 +124,10 @@ function Render.film(session, input, output, film, paper, mode, recipe, printing
         if printing[key]~=nil then args[#args+1]="--"..flag; args[#args+1]=tostring(printing[key]) end
     end
     if printing.displayProof then args[#args+1]="--display-proof" end
+    if printing.paperCaption and printing.paperCaption~="" then args[#args+1]="--paper-caption="..printing.paperCaption end
+    if printing.watermark=="text" then args[#args+1]="--watermark-text="..printing.watermarkText end
+    if printing.watermark=="png" then args[#args+1]="--watermark-png="..printing.watermarkPng end
+    if printing.draft then args[#args+1]="--draft" end
     if printing.cineon then args[#args+1]="--cineon" end
     if printing.holes==false then args[#args+1]="--no-holes" end
     Worker.request(session, args, mode == "preview" and 300 or 1800)

@@ -25,6 +25,19 @@ def add_arguments(job):
     job.add_argument("--display-proof", action="store_true", help="Use display-quality JPEG encoding.")
     job.add_argument("--paper-border", choices=("none", "auto", *PAPER_COLORS, "custom"), default="none")
     job.add_argument("--paper-layout", choices=("even", "instant"), default="even")
+    job.add_argument("--instant-frame", choices=("original", "square"), default="original")
+    job.add_argument("--instant-position", type=float, default=0)
+    job.add_argument("--paper-caption", default="")
+    job.add_argument("--caption-font", default="auto")
+    job.add_argument("--watermark", choices=("off", "text", "png"), default="off")
+    job.add_argument("--watermark-text", default="")
+    job.add_argument("--watermark-font", default="auto")
+    job.add_argument("--watermark-png", default="")
+    job.add_argument("--watermark-color", default="#FFFFFF")
+    job.add_argument("--watermark-position", choices=("tl","tr","center","bl","br"), default="br")
+    job.add_argument("--watermark-opacity", type=float, default=.7)
+    job.add_argument("--watermark-size", type=float, default=.12)
+    job.add_argument("--draft", action="store_true", help="Limit interactive proof inputs to 800 pixels.")
     job.add_argument("--paper-margin", type=float, default=.035,
                      help="Width on each side, as a fraction of the finished image's short edge.")
     job.add_argument("--paper-color", default=PAPER_COLORS["warm"], help="Custom paper color in sRGB #RRGGBB.")
@@ -255,11 +268,50 @@ def encoded_paper_color(hex_color, space):
     return np.clip(color, 0., 1.)
 
 
+@lru_cache(maxsize=32)
+def caption_font(size, face="auto"):
+    from PIL import ImageFont
+    fonts = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
+    if face != "auto":
+        local = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft/Windows/Fonts"
+        if face == Path(face).name and Path(face).suffix.lower() in (".ttf", ".ttc", ".otf"):
+            for directory in (local, fonts):
+                if (directory / face).is_file():
+                    return ImageFont.truetype(str(directory / face), size)
+        raise ValueError(f"所选字体不可用：{face}，请重新选择字体。")
+    for name in ("msyh.ttc", "simsun.ttc", "segoeui.ttf"):
+        if (fonts / name).is_file():
+            return ImageFont.truetype(str(fonts / name), size)
+    return ImageFont.load_default(size=size)
+
+
+def caption_band(band, text, margin, paper, face):
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    height, width = band.shape[:2]
+    available = width - 2 * margin
+    size = max(1, round(height * .5))
+    font = caption_font(size, face)
+    l, t, r, b = font.getbbox(text)
+    ratio = min(1, available / max(1, r-l), height / max(1, b-t))
+    font = caption_font(max(1, int(size * ratio)), face)
+    l, t, r, b = font.getbbox(text)
+    mask = Image.new("L", (width, height))
+    ImageDraw.Draw(mask).text(((width-r+l)//2-l, (height-b+t)//2-t), text, font=font, fill=255)
+    alpha = np.asarray(mask, dtype=np.float32)[:, :, None] / 255
+    ink = .1 if np.dot(paper, (.21, .72, .07)) > .5 else .94
+    band += (ink - band) * alpha
+
+
 def paper_border(image, args, printed):
     import numpy as np
 
     style = args.paper_border
     width = bounded(args.paper_margin, 0, .30)
+    instant = args.paper_layout == "instant"
+    if instant and args.instant_frame == "square":
+        image = crop(image, 1, x=args.instant_position, y=args.instant_position)
     if style == "none" or width == 0 or (style == "auto" and not printed):
         return image
     color = args.paper_color if style == "custom" else PAPER_COLORS["warm" if style == "auto" else style]
@@ -275,7 +327,66 @@ def paper_border(image, args, printed):
     canvas[margin:-bottom, :margin] = edges
     canvas[margin:-bottom, -margin:] = edges
     canvas[margin:margin+h, margin:margin+w] = image
+    if instant and args.paper_caption.strip():
+        caption_band(canvas[-bottom:], args.paper_caption.strip(), margin, edges, args.caption_font)
     return canvas
+
+
+def watermark(image, args):
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    opacity = bounded(args.watermark_opacity, 0, 1)
+    if args.watermark == "off" or not opacity:
+        return image
+    h, w = image.shape[:2]
+    short = min(h, w)
+    pad = min(round(short*.025), (short-1)//2)
+    size = max(1, round(short * bounded(args.watermark_size, .01, .5)))
+    if args.watermark == "text":
+        text = args.watermark_text.strip()
+        if not text:
+            return image
+        font = caption_font(size, args.watermark_font)
+        l,t,r,b = font.getbbox(text)
+        scale = min(1, (w-2*pad)/max(1,r-l), (h-2*pad)/max(1,b-t))
+        font = caption_font(max(1,int(size*scale)), args.watermark_font)
+        l,t,r,b = font.getbbox(text)
+        mask = Image.new("L", (max(1,r-l),max(1,b-t)))
+        ImageDraw.Draw(mask).text((-l,-t),text,font=font,fill=255)
+        rgb = encoded_paper_color(args.watermark_color, args.output_space)
+    else:
+        if not args.watermark_png or not Path(args.watermark_png).is_file():
+            raise ValueError("请输入可读取的 PNG 水印文件路径。")
+        with Image.open(args.watermark_png) as source:
+            if source.format != "PNG":
+                raise ValueError("图片水印需要 PNG 文件。")
+            logo = source.convert("RGBA")
+            # Pillow resizes RGBA with premultiplied alpha to avoid edge halos.
+            scale = min(size/max(logo.size), (w-2*pad)/logo.width, (h-2*pad)/logo.height)
+            logo = logo.resize(tuple(max(1,round(n*scale)) for n in logo.size), Image.Resampling.LANCZOS)
+            mask = logo.getchannel("A")
+            colors = logo.convert("RGB")
+            if source.info.get("icc_profile"):
+                import io
+                from PIL import ImageCms
+                colors = ImageCms.profileToProfile(colors, io.BytesIO(source.info["icc_profile"]),
+                                                   ImageCms.createProfile("sRGB"), outputMode="RGB")
+        rgb = np.asarray(colors, dtype=np.float32)/255
+        if args.output_space != "srgb":
+            import colour
+            rgb = colour.RGB_to_RGB(rgb,"sRGB",colour_name(args.output_space),
+                                    chromatic_adaptation_transform="Bradford",
+                                    apply_cctf_decoding=True,apply_cctf_encoding=True)
+    mw,mh = min(mask.width,w-2*pad),min(mask.height,h-2*pad)
+    position = args.watermark_position
+    x = (w-mw)//2 if position=="center" else w-pad-mw if position.endswith("r") else pad
+    y = (h-mh)//2 if position=="center" else h-pad-mh if position.startswith("b") else pad
+    alpha = np.asarray(mask,dtype=np.float32)[:mh,:mw,None]*(opacity/255)
+    result = image.copy()
+    region = result[y:y+mh,x:x+mw]
+    region += (rgb-region)*alpha
+    return result
 
 
 def finish(image, args, second=None, *, printed=True):
@@ -346,7 +457,7 @@ def finish(image, args, second=None, *, printed=True):
     if limit and max(image.shape[:2])>limit:
         h,w=image.shape[:2]; k=limit/max(h,w)
         image=resample(image,max(1,round(w*k)),max(1,round(h*k)))
-    return image
+    return watermark(image, args)
 
 
 def publish(destination, image, args, second=None, *, printed=True):
@@ -354,6 +465,8 @@ def publish(destination, image, args, second=None, *, printed=True):
     import tifffile
     from PIL import Image
     destination=Path(destination)
+    if args.watermark=="png" and args.watermark_png and Path(args.watermark_png).resolve()==destination.resolve():
+        raise ValueError("输出文件不能覆盖水印图片。")
     if any(source.resolve()==destination.resolve() or (destination.exists() and source.exists() and
             source.samefile(destination)) for source in args.protected_source):
         raise ValueError("Choose a different name or folder: the target is an original photo.")

@@ -5,6 +5,9 @@ local LrTasks = import "LrTasks"
 
 local P = {}
 local finish = {paperBorder="auto",paperLayout="even",paperMargin=0.035,paperColor="#F7F3E9",gate="none",holes=true,markings=true,frameNumber=1,fog=0,leak=0,
+    instantFrame="original",instantPosition=0,paperCaption="",
+    captionFont="auto",watermark="off",watermarkText="",watermarkFont="auto",watermarkPng="",
+    watermarkColor="#FFFFFF",watermarkPosition="br",watermarkOpacity=.7,watermarkSize=.12,
     dateFace="none",datePosition="br",dateSize=0.043,dateMargin=0.04,dateBrightness=0.85,
     pairDirection="horizontal",pairGap=1,firstEv=0,secondEv=0,firstScale=1,secondScale=1,
     firstX=0,firstY=0,secondX=0,secondY=0}
@@ -54,6 +57,16 @@ end
 function P.options(p,photo,film,paper,preview,perPhoto)
     local f={}
     assign(f,finish,perPhoto or P.snapshot(p))
+    if f.paperCaption:find("{date}",1,true) then
+        f.paperCaption=f.paperCaption:gsub("{date}",captureDate(photo))
+    end
+    if f.watermark=="text" and f.watermarkText:find("{date}",1,true) then
+        f.watermarkText=f.watermarkText:gsub("{date}",captureDate(photo))
+    end
+    if preview and f.watermark=="png" and f.watermarkPng~="" then
+        local ok,attrs=LrTasks.pcall(LrFileUtils.fileAttributes,f.watermarkPng)
+        if ok and attrs then f.logoModified=attrs.fileModificationDate; f.logoBytes=attrs.fileSize end
+    end
     local text=""
     if f.dateFace=="date" then text=captureDate(photo)
     elseif f.dateFace=="data" then

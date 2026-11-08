@@ -147,6 +147,8 @@ def render(args, catalog):
 
     if not 1 <= args.quality <= 100:
         raise ValueError("JPEG quality must be between 1 and 100.")
+    if args.draft and not args.display_proof:
+        raise ValueError("Draft rendering requires a display proof.")
     if not 0 < args.frame_fraction <= 1:
         raise ValueError("frame-fraction must be > 0 and <= 1.")
     if args.output.exists() and args.collision != "overwrite":
@@ -157,7 +159,12 @@ def render(args, catalog):
     def frame(path, ev, film, paper, recipe, mode, diagnostic_path=None):
         paper = resolve_paper(catalog, film, paper)
         physical, post = parse_recipe(json.loads(recipe))
-        rgb = print_output.expose(read_input(path, args.input_space), ev, args.input_space)
+        rgb = read_input(path, args.input_space)
+        h, w = rgb.shape[:2]
+        if args.draft and max(w, h) > 800:
+            scale = 800 / max(w, h)
+            rgb = print_output.resample(rgb, max(1, round(w*scale)), max(1, round(h*scale)))
+        rgb = print_output.expose(rgb, ev, args.input_space)
         if diagnostic_path:
             values = grade.diagnostics(rgb, film, paper, physical, src, post)
             with new_output(diagnostic_path) as tmp:
@@ -196,7 +203,7 @@ def render(args, catalog):
         stat = args.input.stat()
         proof_key = (args.input.resolve(), stat.st_ino, stat.st_mtime_ns, stat.st_size,
                      args.film, args.paper, args.recipe, mode, args.input_space, args.output_space,
-                     args.frame_fraction, args.first_ev, args.cineon, bool(args.diagnostics))
+                     args.frame_fraction, args.first_ev, args.cineon, args.draft, bool(args.diagnostics))
     if proof_key is not None and _last_proof is not None and _last_proof[0] == proof_key:
         _, result, printed, diagnostics = _last_proof
         if args.diagnostics:

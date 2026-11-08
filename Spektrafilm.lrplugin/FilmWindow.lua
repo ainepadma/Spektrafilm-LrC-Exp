@@ -9,7 +9,7 @@ local child = LrPathUtils.child
 local function module(name) return dofile(child(_PLUGIN.path,name..".lua")) end
 local Json = require "Json"
 local ExportInputs = require "ExportInputs"
-local Settings = require "ExportSettings"
+local Settings = module("ExportSettings")
 local Render, Printing, Panel = module("Render"),module("Printing"),module("RecipePanel")
 local PhotoRecipes, Workspace = module("PhotoRecipes"),module("WorkspaceSession")
 local Strip, Inspector = module("BrowseTools"),module("WorkspaceInspector")
@@ -37,7 +37,7 @@ local function runEditor(context, ws)
     local catalog = LrApplication.activeCatalog()
     local p={photoName=""}
     local session = Render.newSession()
-    local inputs = ExportInputs.new(session)
+    local queue = {}
     local state = {revision=0,inputVersion=0,dirty=true,busy=false,closed=false,
         width=1600,height=1000,selection={},candidates={},index=0,previews={},options={},
         inspection={enabled=false,mode="after",zoom="fit",divider=50,x=50,y=50}}
@@ -47,9 +47,12 @@ local function runEditor(context, ws)
     local strip=Strip.new(ws,Workspace,function() state.dirty=true end)
     local inspector=Inspector.new(session,Render)
     context:addCleanupHandler(function() strip.closed=true;state.closed=true;Render.closeSession(session) end)
+    local makeFolder=require "WorkFolder"
+    local inputs=ExportInputs.new(makeFolder(session,"export-inputs"))
     local lists = Render.profiles(session)
     local store = PhotoRecipes.open(catalog,status)
     local presets=Settings.presets()
+    local filmPresets=Settings.presets(true)
     p.film = preferred(lists.film, "kodak_portra_400")
     p.paper = preferred(lists.paper, "kodak_portra_endura")
     local previous = Settings.load()
@@ -60,7 +63,9 @@ local function runEditor(context, ws)
     p.category = "all"
     Panel.match(p, lists, state.options, false)
 
-    local function setPicture(path, photo, mate, histogram)
+    local function setPicture(path, photo, mate, histogram, draft)
+        state.pictureDraft=draft==true
+        state.finishedRevision=path and not draft and not histogram and state.revision or nil
         p.picture, p.histogram = path,histogram
         state.picturePhoto, state.pictureMate, state.dirty = photo, mate, true
     end
@@ -78,8 +83,7 @@ local function runEditor(context, ws)
         return {film=p.film, paper=p.paper, mode=p.mode, options=Json.clone(state.options),
                 printing=Printing.snapshot(p)}
     end
-    local function pairOptions(printing, mate, firstRecipe)
-        local second = Panel.forRender(store:get(mate, firstRecipe), lists)
+    local function pairOptions(printing, mate, second)
         printing.pairFilm, printing.pairPaper = second.film, second.paper
         printing.pairRecipe = second.options or {}
         printing.pairMode = second.mode
@@ -138,20 +142,20 @@ local function runEditor(context, ws)
             p.position = string.format("%d–%d / %d",state.index,state.index+1,total)
         end
         p.exportTitle = p.pair and "导出半格组合" or (#state.selection > 1 and "导出所选照片" or "导出当前照片")
-        p.canEdit = state.busy ~= "export"
-        p.canExport = photo ~= nil and not state.busy
+        p.canEdit = true
+        p.canExport = photo ~= nil and not state.stop
         p.canRefresh = photo ~= nil and p.canEdit
         p.canPaper = p.canRefresh and not p.directScan
         p.canGrain = p.canRefresh and p.mode ~= "fast-color" and state.options.grain_on ~= false
         p.canScan = p.canRefresh and not p.forcedScan
-        p.canStop = state.busy == "export" and not state.stop
+        p.canStop = state.exporting and not state.stop
         p.canPrevious = p.canEdit and state.index > 1
         local step = p.pair and #state.selection > 1 and 2 or 1
         p.canNext = p.canEdit and state.index+step <= total
         state.dirty=true
     end
 
-    local function buildPreview(revision)
+    local function buildPreview(revision,draft)
         local photo = currentPhoto()
         if not photo then status(""); return end
         local version, recipe = state.inputVersion, Panel.forRender(getRecipe(), lists)
@@ -171,16 +175,18 @@ local function runEditor(context, ws)
         end
         local printing = Printing.options(p, photo, film, paper, true, recipe.printing)
         printing.displayProof = true
+        printing.draft = draft or nil
         local mate = p.pair and state.candidates[state.index+1] or nil
         if p.pair and p.format == "di" then setPicture(nil); status("Cineon 中间片不支持半格配对。"); return end
         if p.pair and not mate then setPicture(nil); status("半格配对需要下一张照片。"); return end
-        if mate then pairOptions(printing, mate, recipe) end
+        if mate then pairOptions(printing, mate, Panel.forRender(store:get(mate, recipe),lists)) end
         local mateEdit = mate and mate:getRawMetadata("lastEditTime")
         local signature = Json.encode({recipe=recipe, print=printing, format=p.format,width=width,height=height})
         local edited = photo:getRawMetadata("lastEditTime")
         if state.closed or revision ~= state.revision then return end
         local ready = mode == "fast-color" and "高清预览 · 快速色彩" or "高清预览 · 完整模拟"
         if p.format == "di" then ready = "Cineon 对数预览 · 负片扫描，不叠加相纸、片边和日期背" end
+        if draft then ready="快览 · 停止调整后生成高清预览" end
         for i, entry in ipairs(state.previews) do
             if edited and entry.edited == edited and samePhoto(entry.photo, photo) and entry.version == version
                     and entry.signature == signature and samePhoto(entry.mate, mate) and entry.mateEdit == mateEdit then
@@ -202,7 +208,7 @@ local function runEditor(context, ws)
         end
         if state.closed or revision ~= state.revision then return end
         local path = child(session, "preview-" .. revision .. ".png")
-        local diagnostics = child(session, "measure-" .. revision .. ".tsv")
+        local diagnostics = not draft and child(session, "measure-" .. revision .. ".tsv") or nil
         if mate then
             printing.pairInput = Render.input(mate, session, width, height)
         end
@@ -210,14 +216,24 @@ local function runEditor(context, ws)
                                              mode, recipe.options, printing, diagnostics)
         if printing.pairInput then LrFileUtils.delete(printing.pairInput) end
         if not success then error(reason, 0) end
-        local measurements = Panel.readMeasurements(diagnostics)
-        LrFileUtils.delete(diagnostics)
+        local measurements
+        if diagnostics then
+            measurements=Panel.readMeasurements(diagnostics)
+            LrFileUtils.delete(diagnostics)
+        end
         local latestEdit = photo:getRawMetadata("lastEditTime")
         if not state.closed and revision == state.revision and samePhoto(currentPhoto(), photo) then
             if latestEdit ~= edited or (mate and mate:getRawMetadata("lastEditTime") ~= mateEdit) then
                 LrFileUtils.delete(path)
                 setPicture(nil)
                 status("照片调整已变化，请刷新预览。")
+                return
+            end
+            if draft then
+                if state.lastDraft then LrFileUtils.delete(state.lastDraft) end
+                state.lastDraft=path
+                setPicture(path, photo, mate, nil, true)
+                status(ready)
                 return
             end
             table.insert(state.previews, 1, { photo = photo, edited = edited, version = version,
@@ -232,11 +248,12 @@ local function runEditor(context, ws)
         end
     end
 
-    local function requestPreview(refreshInput)
+    local function requestPreview(refreshInput,draft)
         if state.closed then return end
         alignPair()
-        if state.busy ~= "export" then restorePhoto(false) end
+        restorePhoto(false)
         state.revision = state.revision + 1
+        state.wantDraft=draft==true and not state.inspection.enabled
         local requested = state.revision
         if refreshInput then state.inputVersion = state.inputVersion + 1 end
         local photo = currentPhoto()
@@ -267,9 +284,9 @@ local function runEditor(context, ws)
             repeat
                 revision = state.revision
                 -- Collapse rapid navigation and popup changes before starting work.
-                LrTasks.sleep(0.12)
+                LrTasks.sleep(state.wantDraft and 0.01 or 0.12)
                 if not state.closed and revision == state.revision then
-                    local ok, reason = LrTasks.pcall(buildPreview, revision)
+                    local ok, reason = LrTasks.pcall(buildPreview, revision,state.wantDraft)
                     if not ok and revision == state.revision then status(tostring(reason)) end
                 end
             until state.closed or revision == state.revision
@@ -280,7 +297,7 @@ local function runEditor(context, ws)
 
 
     local function navigate(delta)
-        if state.closed or state.busy == "export" then return end
+        if state.closed then return end
         -- The host poll updates the pool. Browsing never changes the host selection.
         if not samePhoto(catalog:getTargetPhoto(), state.anchor) then
             syncSelection(false)
@@ -296,7 +313,7 @@ local function runEditor(context, ws)
     end
 
     local function exportSelection()
-        if state.busy or state.closed then return end
+        if state.stop or state.closed then return end
         local shown, shownSelection = currentPhoto(), state.selection
         syncSelection(true)
         local current = currentPhoto()
@@ -316,10 +333,13 @@ local function runEditor(context, ws)
         end
         p.edge = size
         local edge = size > 0 and size or nil
-        local startRevision = state.revision
-        state.busy, state.stop = "export", false
-        updateControls()
-        LrTasks.startAsyncTask(function()
+        local settings=Printing.settings(p)
+        settings.folder,settings.format,settings.edge=folder,p.format,size
+        local recipes={}
+        for i,photo in ipairs(photos) do
+            recipes[i]=Panel.forRender(store:get(photo,defaultRecipe),lists)
+        end
+        local function runBatch()
             local completed, failed, skipped = 0, 0, 0
             local results, published = {}, {}
             local ok, reason = LrTasks.pcall(function()
@@ -338,8 +358,8 @@ local function runEditor(context, ws)
                             results[#results+1] = "跳过 · "..name.."（缺少第二张）"
                             return
                         end
-                        local recipe = Panel.forRender(store:get(photo, defaultRecipe),lists)
-                        local path, skip = Printing.target(p, photo, recipe.film, recipe.paper, pair)
+                        local recipe = recipes[index]
+                        local path, skip = Printing.target(settings, photo, recipe.film, recipe.paper, pair)
                         if skip then
                             skipped = skipped+1
                             results[#results+1] = "跳过 · "..name.."（文件已存在）"
@@ -351,18 +371,18 @@ local function runEditor(context, ws)
                             results[#results+1] = "跳过 · "..name.."（本批次已有同名输出）"
                             return
                         end
-                        if p.collision == "overwrite" and LrFileUtils.exists(path) == "file"
+                        if settings.collision == "overwrite" and LrFileUtils.exists(path) == "file"
                                 and catalog:findPhotoByPath(path) then
                             error("目标文件属于当前 LrC 目录，无法覆盖："..path,0)
                         end
-                        local printing = Printing.options(p, photo, recipe.film, recipe.paper, false, recipe.printing)
+                        local printing = Printing.options(settings, photo, recipe.film, recipe.paper, false, recipe.printing)
                         local start = LrDate.currentTime()
                         local reused, mateReused
                         status(string.format("%d / %d · 正在准备 LrC 图像 · %s",index,#photos,name))
                         input,reused = inputs:acquire(photo,edge)
                         if state.closed then return end
                         if mate then
-                            pairOptions(printing, mate, recipe)
+                            pairOptions(printing, mate, recipes[index+1])
                             second,mateReused = inputs:acquire(mate,edge)
                             printing.pairInput = second.path
                         end
@@ -384,20 +404,38 @@ local function runEditor(context, ws)
                     end
                 end
             end)
-            state.busy = false
-            updateControls()
             if state.closed then return end
             if not ok then results[#results+1] = tostring(reason) end
-            state.results = table.concat(results, "\n")
+            local detail=table.concat(results,"\n")
             local summary = string.format("已导出 %d 张，失败 %d 张。", completed, failed)
             if skipped > 0 then summary = summary.." 跳过 "..skipped.." 项。" end
             if state.stop then summary = summary.." 队列已停止。" end
             status(summary)
-            if state.revision ~= startRevision then requestPreview(false) end
+            state.results=table.concat({state.results or "",summary,detail},"\n"):gsub("^\n","")
+        end
+        queue[#queue+1]=runBatch
+        state.dirty=true
+        if state.exporting then return end
+        state.exporting=true
+        updateControls()
+        LrTasks.startAsyncTask(function()
+            while #queue>0 and not state.closed and not state.stop do
+                local batch=table.remove(queue,1)
+                local ok,reason=LrTasks.pcall(batch)
+                if not ok then status(tostring(reason)) end
+            end
+            if state.stop and #queue>0 then
+                local note=string.format("已取消 %d 个待处理批次。",#queue)
+                state.results=(state.results or "").."\n"..note
+                status(note)
+            end
+            queue={}
+            state.exporting,state.stop=false,false
+            updateControls()
         end)
     end
 
-    local function savePhoto(preferPaper)
+    local function savePhoto(preferPaper,draft)
         Panel.match(p,lists,state.options,preferPaper)
         local recipe=getRecipe()
         local signature=Json.encode(recipe)
@@ -405,7 +443,7 @@ local function runEditor(context, ws)
             store:set(currentPhoto(),recipe)
             state.signature=signature
         end
-        requestPreview(false)
+        requestPreview(false,draft)
     end
 
     local function output()
@@ -415,18 +453,24 @@ local function runEditor(context, ws)
         return data
     end
 
+    local function presetNames(records)
+        local names={}
+        for name in pairs(records) do names[#names+1]=name end
+        table.sort(names)
+        return names[1] and names
+    end
+
     local function publish()
         if not state.dirty then return end
         state.dirty=false
-        local names={}
-        for name in pairs(presets) do names[#names+1]=name end
-        table.sort(names)
         local photo=currentPhoto()
         Workspace.publish(ws,{photoId=photo and tostring(photo.localIdentifier) or "",fileName=p.photoName,
-            index=state.index,total=#state.candidates,position=p.position,selection=p.selection,
-            status=p.status,busy=state.busy,preview=p.picture,histogram=p.histogram,inspection=state.inspection,
+            index=state.index,total=#state.candidates,position=p.position,selection=p.selection,draft=state.pictureDraft,
+            canPin=state.finishedRevision==state.revision and not state.inspection.enabled,
+            partnerId=p.pair and state.candidates[state.index+1] and tostring(state.candidates[state.index+1].localIdentifier) or "",
+            status=(state.exporting and ("导出队列 · 待处理 "..#queue.." 批  |  ") or "")..(p.status or ""),busy=state.busy,preview=p.picture,histogram=p.histogram,inspection=state.inspection,
             filmItems=lists.film,paperItems=p.paperItems[1] and p.paperItems,categories=Panel.categories(lists),
-            recipe=getRecipe(),export=output(),presets=names[1] and names,diagnostics=state.measurements,
+            recipe=getRecipe(),export=output(),presets=presetNames(presets),filmPresets=presetNames(filmPresets),diagnostics=state.measurements,
             results=state.results,thumbs=strip.items[1] and strip:snapshot(),stockHint=p.stockHint,forcedScan=p.forcedScan,
             directScan=p.directScan,canScan=p.canScan,canPaper=p.canPaper,canGrain=p.canGrain,canEdit=p.canEdit,
             canExport=p.canExport,canRefresh=p.canRefresh,canStop=p.canStop,canPrevious=p.canPrevious,
@@ -455,12 +499,21 @@ local function runEditor(context, ws)
                 if value==Json.null then value=nil end
                 state.options[key]=value
             elseif a.group=="printing" and Printing.snapshot(p)[key]~=nil then
-                if key=="paperColor" and (type(value)~="string" or not value:match("^#%x%x%x%x%x%x$")) then
-                    error("请输入六位纸面色值，例如 #F7F3E9。",0)
+                if key=="watermarkPng" then
+                    value=tostring(value):match("^%s*(.-)%s*$"):gsub('^"(.*)"$','%1')
+                    if value~="" and (not value:lower():match("%.png$") or not LrPathUtils.isAbsolute(value)) then
+                        error("请输入 PNG 水印文件的完整路径。",0)
+                    end
+                end
+                if (key=="paperCaption" or key=="watermarkText") and (type(value)~="string" or #value>480 or value:find("%c")) then
+                    error("请输入单行短标题（最多 480 个 UTF-8 字节）。",0)
+                end
+                if (key=="paperColor" or key=="watermarkColor") and (type(value)~="string" or not value:match("^#%x%x%x%x%x%x$")) then
+                    error("请输入六位色值，例如 #F7F3E9。",0)
                 end
                 p[key]=value
             else return end
-            savePhoto(key=="film")
+            savePhoto(key=="film",a.draft)
         end
     end
 
@@ -499,6 +552,37 @@ local function runEditor(context, ws)
         end
     end
 
+    local function filmPreset(a)
+        local photo=currentPhoto()
+        if not photo then return end
+        if a.operation=="save" then
+            local recipe=getRecipe()
+            Settings.savePreset(a.name,recipe,true)
+            filmPresets[a.name]=recipe
+            status("已保存胶片配方 · "..a.name)
+            return
+        end
+        local recipe=filmPresets[a.name]
+        if not recipe then error("请选择已保存的胶片配方。",0) end
+        if type(recipe)~="table" or type(recipe.film)~="string" or type(recipe.paper)~="string"
+            or type(recipe.options)~="table" or type(recipe.printing)~="table"
+            or (recipe.mode~="full" and recipe.mode~="fast-color") then
+            error("胶片配方数据无效："..a.name,0)
+        end
+        local targets={photo}
+        if a.operation=="selection" then
+            if syncSelection(true) then
+                requestPreview(false);status("选区已变化，请核对后重新应用。");return
+            end
+            if #state.selection<2 then status("请先在 LrC 中选择至少两张照片。");return end
+            targets=state.selection
+        elseif a.operation~="current" then return end
+        for _,target in ipairs(targets) do store:set(target,recipe) end
+        restorePhoto(true)
+        requestPreview(false)
+        status(string.format("已应用「%s」到 %d 张照片。",a.name,#targets))
+    end
+
     local function dispatch(kind,a)
         a=a or {}
         if kind=="close" then state.closed=true;return end
@@ -514,10 +598,9 @@ local function runEditor(context, ws)
             return
         end
         if kind=="stop" then
-            if state.busy=="export" then state.stop=true;updateControls();status("当前项完成后停止。") end
+            if state.exporting then state.stop=true;updateControls();status("当前项完成后停止。") end
             return
         end
-        if state.busy=="export" then return end
         local photo=currentPhoto()
         if a.photoId and a.photoId~="" and (not photo or tostring(a.photoId)~=tostring(photo.localIdentifier)) then
             state.dirty=true;return
@@ -543,6 +626,7 @@ local function runEditor(context, ws)
         elseif kind=="paste" or kind=="sync" then paste(kind=="sync",a.groups)
         elseif kind=="export" then exportSelection()
         elseif kind=="preset" then preset(a)
+        elseif kind=="filmPreset" then filmPreset(a)
         elseif kind=="inspect" then
             local nextView=Json.clone(state.inspection)
             nextView.enabled=a.enabled~=false
@@ -565,7 +649,7 @@ local function runEditor(context, ws)
             if not ok then status(tostring(why));error(why,0) end
         end) then break end
         local now=LrDate.currentTime()
-        if now>=nextHostCheck and state.busy~="export" then
+        if now>=nextHostCheck then
             nextHostCheck=now+0.6
             local active=catalog:getTargetPhoto()
             local selection=active and catalog:getTargetPhotos() or {}
@@ -580,7 +664,7 @@ local function runEditor(context, ws)
     Render.stopSession(session)
     state.closed = true
     -- The worker owns intermediate files until its process exits.
-    while state.busy do LrTasks.sleep(0.1) end
+    while state.busy or state.exporting do LrTasks.sleep(0.1) end
     local problem=Workspace.status(ws)
     store:flush()
     Settings.save(p.folder, p.format, p.edge, p.mode, Printing.settings(p))

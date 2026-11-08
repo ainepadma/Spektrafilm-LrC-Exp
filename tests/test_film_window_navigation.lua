@@ -2,7 +2,7 @@
 package.path="Spektrafilm.lrplugin/?.lua;"..package.path
 local Json=require "Json"
 local catalog, photos, active, selected, visible={},{}
-local stored,presets,inputs,renders,events={}, {}, {}, {}, {}
+local stored,inputs,renders,events={}, {}, {}, {}
 local deleted,files={},{}
 local state,saved,closed,callback=nil,nil,false,nil
 local now=0
@@ -11,6 +11,7 @@ for i=1,4 do
         requestJpegThumbnail=function(_,w,h,f) f("jpeg") end,
         getRawMetadata=function(self,key)
             if key=="lastEditTime" then return self.edited end
+            if key=="dateTimeOriginal" then return "2026-11-0"..i end
             if key=="path" then return "/original/"..i..".tif" end
         end,
         getFormattedMetadata=function(_,key) if key=="fileName" then return i..".tif" end end}
@@ -47,8 +48,8 @@ package.loaded.ProjectData={
 package.loaded.ExportSettings={
     load=function()return {folder="/export",format="tif",edge=0,mode="full"}end,
     save=function(...) saved={...} end,
-    presets=function()return presets end,
-    savePreset=function(name,r)presets[name]=r end,
+    presets=dofile("Spektrafilm.lrplugin/ExportSettings.lua").presets,
+    savePreset=dofile("Spektrafilm.lrplugin/ExportSettings.lua").savePreset,
 }
 local Render={
     newSession=function()return "/session"end,stopSession=function()end,closeSession=function()end,
@@ -86,6 +87,20 @@ step(function(d)
 end)
 step(function(d)
     assert(inputs[#inputs].w==2260 and inputs[#inputs].h==1350)
+    d("edit",{group="options",key="film_ev",value=.2,photoId="2",draft=true})
+    assert(renders[#renders].printing.draft)
+end)
+step(function(d)
+    assert(state.draft and state.status:find("快览",1,true))
+    d("edit",{group="options",key="film_ev",value=.2,photoId="2",draft=false})
+    assert(not renders[#renders].printing.draft and state.photoId=="2")
+    local superseded
+    callback=function()
+        superseded=renders[#renders].path
+        d("edit",{group="options",key="film_ev",value=.35,photoId="2"})
+    end
+    d("edit",{group="options",key="film_ev",value=.3,photoId="2",draft=true})
+    assert(deleted[superseded] and renders[#renders].options.film_ev==.35 and not renders[#renders].printing.draft)
     d("edit",{group="printing",key="paperBorder",value="black",photoId="2"})
     d("edit",{group="printing",key="paperMargin",value=.1,photoId="2"})
     d("edit",{group="options",key="film_ev",value=.45,photoId="2"})
@@ -94,6 +109,7 @@ end)
 local cachedPath
 step(function(d)
     cachedPath=state.preview
+    assert(not state.draft)
     assert(renders[#renders].printing.paperBorder=="black" and renders[#renders].printing.paperMargin==.1)
     d("navigate",{delta=1})
     d("edit",{group="recipe",key="film",value="slide",photoId="2"})
@@ -128,13 +144,34 @@ step(function(d)
     d("preset",{operation="save",name="proof"})
 end)
 step(function(d)
-    assert(state.preview==cachedPath and not state.histogram and presets.proof.nameTemplate=="{name}-proof")
+    assert(state.preview==cachedPath and not state.histogram and package.loaded.ExportSettings.presets().proof.nameTemplate=="{name}-proof")
     d("export",{photoId="2"})
     local r=renders[#renders]
     assert(r.path=="/export/2-proof.tif" and r.printing.paperBorder=="black" and not r.printing.displayProof)
 end)
 step(function()
     assert(state.results:find("2%-proof.tif"))
+end)
+step(function(d)
+    local drain
+    callback=function()
+        -- Queue the first batch while its display preview is still rendering.
+        local start=modules.LrTasks.startAsyncTask
+        modules.LrTasks.startAsyncTask=function(f)drain=f end
+        d("export",{photoId="2"})
+        modules.LrTasks.startAsyncTask=start
+    end
+    d("viewport",{width=2000,height=1250})
+    assert(drain,"the preview must allow an export click")
+    d("edit",{group="printing",key="paperBorder",value="warm"})
+    d("navigate",{delta=1})
+    d("edit",{group="export",key="folder",value="/second"})
+    d("export",{photoId="3"})
+    d("edit",{group="export",key="folder",value="/export"})
+    drain()
+    assert(renders[#renders-1].path=="/export/2-proof.tif" and renders[#renders-1].printing.paperBorder=="black")
+    assert(renders[#renders].path=="/second/3-proof.tif" and renders[#renders].film=="slide")
+    d("navigate",{delta=-1})
 end)
 step(function(d)
     d("edit",{group="export",key="format",value="di"})
@@ -158,9 +195,27 @@ step(function(d)
     assert(state.status:find("队列已停止",1,true));d("sync",{groups={1,5}})
     d("instant",{stock="bw",photoId=state.photoId})
 end)
-step(function()
+step(function(d)
     assert(state.recipe.film=="ilford_hp5_plus_400" and state.recipe.paper=="ilford_multigrade_iv_rc")
     assert(state.recipe.printing.paperLayout=="instant" and state.recipe.printing.paperMargin==.06)
+    d("edit",{group="printing",key="instantFrame",value="square"})
+    d("edit",{group="printing",key="instantPosition",value=-.4})
+    d("edit",{group="printing",key="paperCaption",value="记录 {date}"})
+    d("filmPreset",{operation="save",name="proof"})
+    d("edit",{group="printing",key="paperMargin",value=.13})
+    d("filmPreset",{operation="current",name="proof"})
+end)
+step(function(d)
+    assert(state.filmPresets[1]=="proof" and state.recipe.printing.paperMargin==.06)
+    assert(package.loaded.ExportSettings.presets().proof.nameTemplate=="{name}-proof")
+    d("filmPreset",{operation="selection",name="proof"})
+    d("navigate",{index=2})
+end)
+step(function()
+    assert(state.recipe.film=="ilford_hp5_plus_400" and state.recipe.printing.paperLayout=="instant")
+    assert(state.recipe.printing.paperCaption=="记录 {date}" and state.recipe.printing.instantPosition==-.4)
+    assert(renders[#renders].printing.paperCaption=="记录 2026-11-0"..state.photoId)
+    assert(state.export.folder=="/export")
     active,selected=nil,{}
 end)
 step(function() assert(state.position=="0 / 0" and not state.canExport and not state.preview) end)
@@ -178,6 +233,7 @@ local ws={
 }
 local original=dofile
 function dofile(path)
+    if path:match("/ExportSettings%.lua$") then return package.loaded.ExportSettings end
     if path:match("/WorkspaceSession%.lua$") then return ws end
     if path:match("/Render%.lua$") then return Render end
     return original(path)

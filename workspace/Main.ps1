@@ -40,7 +40,8 @@ $app.Resources.MergedDictionaries.Add((Load-Xaml 'Theme.xaml'))
 $script:Window=Load-Xaml 'Main.xaml'
 $names='TitleBar','Minimize','Maximize','Close','Rail','RailScroll','FileName','Position','Stage','Empty','Preview',
        'Previous','Next','Fit','Loupe','Before','After','Split','Histogram','Refresh','Divider','DividerRow','RoiX','RoiY','RoiRow',
-       'Chart','HistogramPanel','Filmstrip','BackPage','NextPage','Queue','Export','Stop','Status'
+       'Chart','HistogramPanel','Filmstrip','BackPage','NextPage','Queue','Export','Stop','Status',
+       'Pin','ReferenceLayer','ReferenceImage','ReferenceLine','CompareTools','ComparePosition'
 foreach ($name in $names) { $script:Controls[$name]=$script:Window.FindName($name) }
 $controls=$script:Controls
 $controls.Stage.Focusable=$true
@@ -91,7 +92,8 @@ function Size-Preview {
     $viewport=Get-Viewport
     $w=$view.Source.PixelWidth; $h=$view.Source.PixelHeight
     $scale=if ($script:Inspect.enabled -and $script:Inspect.zoom -eq 'roi') { 1.0 } else {
-        [math]::Min(1.0,[math]::Min($viewport.width/$w,$viewport.height/$h))
+        $fit=[math]::Min($viewport.width/$w,$viewport.height/$h)
+        if ($script:State.draft) { $fit } else { [math]::Min(1.0,$fit) }
     }
     $dpi=Get-DpiScale
     $view.Width=$w*$scale/$dpi;$view.Height=$h*$scale/$dpi
@@ -114,7 +116,32 @@ function Read-PreviewImage([string]$Path) {
         return $bitmap
     } catch { return $null }
 }
+function Clear-Reference {
+    $script:ReferencePhoto=$null
+    $controls.ReferenceImage.Source=$null
+    $controls.Pin.Content='固定为 A'
+    $controls.Pin.IsEnabled=([bool]$script:State.canPin -and !$script:Inspect.enabled -and [bool]$controls.Preview.Source)
+    foreach ($element in @($controls.ReferenceLayer,$controls.ReferenceLine,$controls.CompareTools)) {
+        $element.Visibility='Collapsed'
+    }
+}
+function Size-Reference {
+    $image=$controls.ReferenceImage
+    if (!$image.Source) { return }
+    $stage=$controls.Stage
+    $w=[math]::Max(0,$stage.ActualWidth-$stage.Padding.Left-$stage.Padding.Right)
+    $h=[math]::Max(0,$stage.ActualHeight-$stage.Padding.Top-$stage.Padding.Bottom)
+    $dpi=Get-DpiScale
+    $scale=[math]::Min(1/$dpi,[math]::Min($w/$image.Source.PixelWidth,$h/$image.Source.PixelHeight))
+    $image.Width=$image.Source.PixelWidth*$scale
+    $image.Height=$image.Source.PixelHeight*$scale
+    $x=$w*$controls.ComparePosition.Value/100
+    $controls.ReferenceLayer.Clip=[Windows.Media.RectangleGeometry]::new([Windows.Rect]::new(0,0,$x,$h))
+    $controls.ReferenceLine.Margin=[Windows.Thickness]::new($x,0,0,0)
+}
 function Set-StageImage($State) {
+    if ($script:ReferencePhoto -and ($script:ReferencePhoto -ne $State.photoId -or
+        $script:ReferencePartner -ne $State.partnerId -or $State.inspection.enabled)) { Clear-Reference }
     $path=[string](Read-Member $State 'preview' '')
     if ($path -cne $script:ImagePath -or (!$script:Controls.Preview.Source -and $path)) {
         $bitmap=Read-PreviewImage $path
@@ -126,6 +153,8 @@ function Set-StageImage($State) {
         $script:Controls.Empty.Text=$(if ($State.photoId) {'正在生成预览…'}else{'在 Lightroom Classic 中选择照片'})
         $script:Controls.Empty.Visibility='Visible'
     }
+    $controls.Pin.IsEnabled=([bool]$script:ReferencePhoto -or ($State.canPin -and $controls.Preview.Source -and !$script:Inspect.enabled))
+    Size-Reference
     $chart=[string](Read-Member $State histogram '')
     if ($chart -cne $script:ChartPath -or (!$script:Controls.Chart.Source -and $chart)) {
         $script:ChartPath=$chart;$script:Controls.Chart.Source=Read-PreviewImage $chart
@@ -172,6 +201,7 @@ function Send-Inspection {
     $script:InspectTimer.Stop()
     $i=$script:Inspect
     $i.enabled=($i.mode -ne 'after' -or $i.zoom -ne 'fit' -or $script:ShowChart)
+    if ($i.enabled -and $script:ReferencePhoto) { Clear-Reference }
     $i.divider=[int]$script:Controls.Divider.Value
     $i.x=[int]$script:Controls.RoiX.Value; $i.y=[int]$script:Controls.RoiY.Value
     Paint-Inspection
@@ -189,6 +219,21 @@ function Paint-Fields($State) {
         $value=Get-FieldValue $State $f.group $f.key $f.default
         $enabled=!$busy -and ($hasPhoto -or $f.group -eq 'export')
         $direct=[bool](Read-Member $State 'directScan' $false)
+        if ($f.key -in @('instantFrame','instantPosition','paperCaption','captionFont')) {
+            $enabled=$enabled -and (Get-FieldValue $State printing paperLayout 'even') -eq 'instant'
+            if ($f.key -eq 'instantPosition') { $enabled=$enabled -and (Get-FieldValue $State printing instantFrame 'original') -eq 'square' }
+            if ($f.key -in @('paperCaption','captionFont')) {
+                $border=Get-FieldValue $State printing paperBorder 'auto'
+                $enabled=$enabled -and $border -ne 'none' -and !($direct -and $border -eq 'auto') -and (Get-FieldValue $State printing paperMargin .035) -gt 0
+            }
+        }
+        if ($f.key -like 'watermark*') {
+            $wm=Get-FieldValue $State printing watermark 'off'
+            $enabled=$enabled -and (Get-FieldValue $State export format 'jpg') -ne 'di'
+            if ($f.key -in @('watermarkText','watermarkFont','watermarkColor')) { $enabled=$enabled -and $wm -eq 'text' }
+            elseif ($f.key -eq 'watermarkPng') { $enabled=$enabled -and $wm -eq 'png' }
+            elseif ($f.key -ne 'watermark') { $enabled=$enabled -and $wm -ne 'off' }
+        }
         if ($f.key -in @('paperMargin','paperColor')) {
             $border=Get-FieldValue $State printing paperBorder 'auto'
             if ($f.key -eq 'paperColor' -and $border -ne 'custom') {$enabled=$false}
@@ -251,6 +296,8 @@ function Apply-WorkspaceState($State) {
         $script:ResultsText.Text=if ($State.results) { @($State.results) -join "`n" } else {'尚无记录。'}
         $items=@((Get-Items $State 'presets') | ForEach-Object {[pscustomobject]@{title=[string]$_;value=[string]$_}})
         Set-ChoiceListIfChanged $script:PresetBox $items
+        $filmItems=@((Get-Items $State 'filmPresets') | ForEach-Object {[pscustomobject]@{title=[string]$_;value=[string]$_}})
+        Set-ChoiceListIfChanged $script:FilmPresetBox $filmItems
         $script:DisplayedPhoto=[string]$State.photoId
         foreach ($listener in $script:Listeners) { & $listener $State }
     } finally { $script:Applying=$false }
@@ -265,7 +312,10 @@ function On-WorkspaceReply($Reply) {
     if (!$Reply.ok) { Show-Notice ([string]$Reply.error) }
 }
 
-$script:RangeTimer=New-UiTimer 150 {Flush-Ranges}
+$script:RangeTimer=New-UiTimer 150 {
+    if (([datetime]::UtcNow-$script:LastRangeChange).TotalMilliseconds -ge 150) { Flush-Ranges }
+    elseif ($script:State.busy -ne 'preview' -and !$script:Inspect.enabled) { Flush-Ranges $true }
+}
 $script:InspectTimer=New-UiTimer 140 {Send-Inspection}
 $script:ViewportTimer=New-UiTimer 160 {
     $script:ViewportTimer.Stop()
@@ -277,7 +327,10 @@ $script:ViewportTimer=New-UiTimer 160 {
     }
 }
 Add-StockSection $controls.Rail
+Add-FilmPresetSection $controls.Rail
+$script:FontChoices=@(Get-FontChoices)
 Add-PaperSection $controls.Rail
+Add-WatermarkSection $controls.Rail
 Initialize-RecipeControls $controls.Rail
 Add-OutputSections $controls.Rail
 $script:Applying=$false
@@ -299,6 +352,7 @@ $controls.Export.Add_Click({ Flush-Ranges; [void](Send-UiAction export) })
 $controls.Stop.Add_Click({ [void](Send-UiAction stop) })
 $controls.Queue.Add_Click({ $script:ResultsBody.Parent.IsExpanded=$true; $script:ResultsBody.BringIntoView() })
 $controls.After.Add_Click({
+    if ($script:ReferencePhoto) { Clear-Reference }
     $script:ShowChart=$false; $script:Inspect.mode='after'; $script:Inspect.zoom='fit'
     Send-Inspection
 })
@@ -311,9 +365,24 @@ foreach ($name in @('Divider','RoiX','RoiY')) {
     $controls[$name].Add_ValueChanged({if (!$script:Applying) {$script:InspectTimer.Stop();$script:InspectTimer.Start()}})
 }
 $controls.Stage.Add_SizeChanged({Size-Preview;$script:ViewportTimer.Stop();$script:ViewportTimer.Start()})
+$controls.ReferenceLayer.Add_SizeChanged({Size-Reference})
+$controls.ComparePosition.Add_ValueChanged({Size-Reference})
+$controls.Pin.Add_Click({
+    if ($script:ReferencePhoto) { Clear-Reference;return }
+    if (!$script:State.canPin -or $script:Inspect.enabled -or !$controls.Preview.Source) { return }
+    $script:ReferencePhoto=$script:State.photoId
+    $script:ReferencePartner=$script:State.partnerId
+    $controls.ReferenceImage.Source=$controls.Preview.Source
+    $controls.Pin.Content='结束 A/B'
+    $controls.ComparePosition.Value=50
+    foreach ($element in @($controls.ReferenceLayer,$controls.ReferenceLine,$controls.CompareTools)) {
+        $element.Visibility='Visible'
+    }
+    Size-Reference
+})
 $script:Window.Add_LocationChanged({$script:ViewportTimer.Stop();$script:ViewportTimer.Start()})
 if ($script:Window.PSObject.Methods['add_DpiChanged']) {
-    $script:Window.Add_DpiChanged({Size-Preview;$script:ViewportTimer.Stop();$script:ViewportTimer.Start()})
+    $script:Window.Add_DpiChanged({Size-Preview;Size-Reference;$script:ViewportTimer.Stop();$script:ViewportTimer.Start()})
 }
 $script:Window.Add_Closing({ Flush-Ranges })
 $script:Window.Add_PreviewKeyDown({param($source,$e)
