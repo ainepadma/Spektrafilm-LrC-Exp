@@ -2,6 +2,10 @@
 
 在 Windows 上用 Lightroom Classic 完成选片和基础调整，再在横向工作区内选择胶片、印相、检查细节并批量导出。当前发布版本为 **0.5.0**。工作区使用 Windows PowerShell 5.1 和 WPF。
 
+![Spektrafilm 横向工作区。左侧为咖啡样片的暖白留边预览，右侧选择胶片与相纸，底部胶片条显示三张照片。](docs/images/workspace.png)
+
+图中使用 Kodak Portra 400 和 Kodak Portra Endura 相纸，右栏的「留白 / 短边 %」设为 3.5。
+
 ## 安装与更新
 
 下载并完整解压 Windows x64 发布包。打开解压后的 `Spektrafilm-LrC-Exp` 文件夹，在 PowerShell 中运行安装脚本。首次安装需要联网下载 Python 3.13 和渲染依赖。[下载 v0.5.0 Windows x64 发布包](https://github.com/ainepadma/Spektrafilm-LrC-Exp/releases/download/v0.5.0/Spektrafilm-LrC-Exp-v0.5.0-Windows-x64.zip)
@@ -22,6 +26,8 @@
 
 ## 胶片与暗房
 
+![同一张照片的原图、Kodak Portra 400 彩色印相和 Ilford HP5 Plus 黑白印相并排对照。](docs/images/film-stocks.png)
+
 - **选择胶片和相纸。** 目录含 25 款拍摄胶片和 9 种印相介质，含黑白银盐、彩色负片、彩色反转片和电影正片印片。相纸列表按所选胶片匹配，切换胶片时优先选用其推荐相纸。反转片使用直接扫描，也可以给负片手动开启直扫。
 - **调整冲印参数。** 展开右栏的冲印设置可以调整胶片曝光、印相亮度、黄／品红滤色和预闪。画幅按毫米设置。完整模拟支持颗粒、光晕、防光晕层、乳剂散射、亮部增强、染料偶合和相纸眩光。快速色彩使用固定配方生成查找表，适合以色调为主的批量输出。
 - **成片调色。** 冲印后的曝光、对比、饱和度和黑白场作用于模拟结果。曲线支持 RGB、亮度及单独红绿蓝通道，可选择、添加、移动和删除控制点。分区调色独立控制整体、阴影、中间调和高光的色相、饱和度与亮度。
@@ -34,7 +40,13 @@
 - 修改一张照片的胶片、相纸或暗房参数，会在项目的 `.runtime/photo-recipes` 中保存配方。记录按 LrC 目录路径和照片 ID 区分，包括虚拟副本。移动或重新命名目录后，需要重新关联原配方。可在「复制设置」「粘贴到当前」「同步到选区」中选择同步的参数组。
 - 批量导出优先使用每张照片已保存的配方，未单独编辑的照片沿用当前配方。浮窗打开期间复用同一个渲染进程。首次渲染可能需要加载引擎或编译数值模块。
 
+![100% 局部检查工作区。分割线左侧显示原图，右侧显示胶片模拟结果，右栏显示 RGB 直方图。](docs/images/inspection.png)
+
+点击「100%」和「分割」，拖动「分割位置」就能比较同一处纹理。图中杯口左半保留原图，右半显示 Kodak Tri-X 400 在 Ilford Multigrade IV RC 相纸上的效果。右栏直方图统计当前局部的模拟结果。
+
 ## 相纸留白、片边与半格
+
+![同一张咖啡样片在无边、暖白相纸留边以及带齿孔的 135 胶片片边下的成片对照。](docs/images/paper-border.png)
 
 - 「相纸留白」在成片四周留出等宽的纸面，可以选亮白、暖白、黑色或自定义色。自动印相采用暖白，每侧宽度默认为加边前图像短边的 3.5%，可在 0–30% 间调整或关闭。旧版逐张配方缺少纸边设置时同样采用自动模式。胶片直扫默认不留边，也可以手动指定纸色。相纸留边会随成片一起导出；指定输出长边时，尺寸包含留边。Cineon 底片保留其密度编码。
 - 「胶片片边」提供 135、半格、XPan 和多种 120 片门，可调整齿孔、胶片名称、帧号、片边雾化与漏光。片门几何和边码由程序绘制，选择片门会按其比例取景。
@@ -62,6 +74,8 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\test_worksp
 ```
 
 Python 测试使用合成图验证物理配方、黑白响应、局部检查、画布、宽色域、双拼、Cineon、加速内核及文件写入。Lua 5.1 测试可从项目根目录运行 `tests/test_*.lua` 中的各脚本，覆盖浮窗、配方、选片和导出缓存。渲染错误日志在 `.runtime/logs` 下。
+
+咖啡样片由 Rachel Michetti 拍摄，以 CC0 发布。胶片对照图使用 NASA 的 Eileen Collins 宇航员肖像，原照属于公有领域。示意图中的胶片效果由本项目渲染。[咖啡样片来源](https://scikit-image.org/docs/stable/api/skimage.data.html#skimage.data.coffee) · [NASA 肖像原照](https://flic.kr/p/r9qvLn)
 
 模拟引擎由 Andrea Volpato 开发，项目依赖固定在提交 `3bb2c2d`。[spektrafilm](https://github.com/andreavolpato/spektrafilm)
 
